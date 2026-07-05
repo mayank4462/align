@@ -86,6 +86,20 @@ export function useSquatDetector(goal = 15) {
       if (state.lastGoodMetrics && state.dropoutFrames <= MAX_DROPOUT_FRAMES) {
         metrics = state.lastGoodMetrics;
       } else {
+        // Tracking has been lost for real (too close, out of frame, etc).
+        // Abandon whatever rep was in progress instead of freezing here and
+        // later resuming with a completely different, unrelated pose — that
+        // mismatch was producing fake "attempts" that were never real squats.
+        if (state.phase !== PHASES.STANDING) {
+          state.phase = PHASES.STANDING;
+          setPhase(PHASES.STANDING);
+        }
+        state.minKneeAngle = 180;
+        state.maxBackAngle = 0;
+        state.minKneeCaveRatio = 1;
+        state.smoothKnee = null;
+        state.smoothBack = null;
+        state.debounceCounter = 0;
         setLiveMetrics(null);
         setFeedback("Step back so your hips, knees, and ankles are all visible.");
         return;
@@ -128,6 +142,7 @@ export function useSquatDetector(goal = 15) {
         state.phase = PHASES.DESCENDING;
         setPhase(PHASES.DESCENDING);
         setSetSummary((s) => (s !== null ? null : s));
+        console.log(`[squat] STANDING -> DESCENDING (knee=${Math.round(kneeAngle)}°, side=${metrics.side})`);
       } else if (Date.now() > state.resultHoldUntil) {
         // Don't stomp a just-shown "Perfect rep!" / "Didn't count" message.
         setFeedback("Ready — go ahead and squat.");
@@ -171,6 +186,15 @@ export function useSquatDetector(goal = 15) {
 
         setRepCount((n) => n + 1);
         setRepHistory((h) => [...h, { faults, good: faults.length === 0 }]);
+
+        // Diagnostic log — only visible in the browser console (F12), never
+        // shown on screen. This is how we find the real numbers instead of
+        // guessing at thresholds blind.
+        console.log(
+          `[squat] side=${metrics.side} minKnee=${Math.round(state.minKneeAngle)}° ` +
+          `maxBack=${Math.round(state.maxBackAngle)}° kneeCave=${state.minKneeCaveRatio < 1 ? state.minKneeCaveRatio.toFixed(2) : "n/a"} ` +
+          `result=${faults.length === 0 ? "PERFECT" : "FAULT: " + faults.join(" | ")}`
+        );
 
         state.resultHoldUntil = Date.now() + RESULT_HOLD_MS;
 
