@@ -13,29 +13,21 @@ export const LM = {
 
 /**
  * Angle (in degrees) at point B, formed by the lines B->A and B->C.
- * Uses x, y, AND z (MediaPipe gives an approximate depth per joint) so the
- * angle is accurate regardless of which way you're facing the camera.
  * e.g. angle(hip, knee, ankle) gives the knee bend angle.
  */
 export function angleAt(a, b, c) {
-  const v1 = { x: a.x - b.x, y: a.y - b.y, z: (a.z ?? 0) - (b.z ?? 0) };
-  const v2 = { x: c.x - b.x, y: c.y - b.y, z: (c.z ?? 0) - (b.z ?? 0) };
-  const dot = v1.x * v2.x + v1.y * v2.y + v1.z * v2.z;
-  const mag1 = Math.hypot(v1.x, v1.y, v1.z);
-  const mag2 = Math.hypot(v2.x, v2.y, v2.z);
+  const v1 = { x: a.x - b.x, y: a.y - b.y };
+  const v2 = { x: c.x - b.x, y: c.y - b.y };
+  const dot = v1.x * v2.x + v1.y * v2.y;
+  const mag1 = Math.hypot(v1.x, v1.y);
+  const mag2 = Math.hypot(v2.x, v2.y);
   if (mag1 === 0 || mag2 === 0) return null;
   const cos = Math.min(1, Math.max(-1, dot / (mag1 * mag2)));
   return (Math.acos(cos) * 180) / Math.PI;
 }
 
-/**
- * Picks whichever side (left/right) has higher landmark visibility/presence.
- * Sticks with the previously chosen side unless the other side is clearly
- * more visible — without this, visibility scores flickering slightly frame
- * to frame can make the app jump between your left and right leg, which
- * looks like fake movement to the rep detector.
- */
-function pickSide(landmarks, preferredSide) {
+/** Picks whichever side (left/right) has higher landmark visibility/presence. */
+function pickSide(landmarks) {
   const leftVis =
     (landmarks[LM.LEFT_HIP]?.visibility ?? 0) +
     (landmarks[LM.LEFT_KNEE]?.visibility ?? 0) +
@@ -44,10 +36,6 @@ function pickSide(landmarks, preferredSide) {
     (landmarks[LM.RIGHT_HIP]?.visibility ?? 0) +
     (landmarks[LM.RIGHT_KNEE]?.visibility ?? 0) +
     (landmarks[LM.RIGHT_ANKLE]?.visibility ?? 0);
-
-  const SWITCH_MARGIN = 0.3; // require a clear win before switching sides
-  if (preferredSide === "left" && leftVis >= rightVis - SWITCH_MARGIN) return "left";
-  if (preferredSide === "right" && rightVis >= leftVis - SWITCH_MARGIN) return "right";
   return rightVis >= leftVis ? "right" : "left";
 }
 
@@ -55,10 +43,10 @@ function pickSide(landmarks, preferredSide) {
  * Extracts the squat-relevant metrics for a single frame of landmarks.
  * Returns null if key points aren't visible enough to trust.
  */
-export function computeSquatMetrics(landmarks, preferredSide = null) {
+export function computeSquatMetrics(landmarks) {
   if (!landmarks) return null;
 
-  const side = pickSide(landmarks, preferredSide);
+  const side = pickSide(landmarks);
   const hip = landmarks[side === "left" ? LM.LEFT_HIP : LM.RIGHT_HIP];
   const knee = landmarks[side === "left" ? LM.LEFT_KNEE : LM.RIGHT_KNEE];
   const ankle = landmarks[side === "left" ? LM.LEFT_ANKLE : LM.RIGHT_ANKLE];
@@ -76,16 +64,10 @@ export function computeSquatMetrics(landmarks, preferredSide = null) {
   const kneeAngle = angleAt(hip, knee, ankle);
 
   // Torso lean: angle of the shoulder->hip line relative to a perfectly
-  // vertical line, measured in 3D so leaning toward/away from a front-facing
-  // camera (which is pure depth movement) is still caught. The z channel is
-  // noisier than x/y on real hardware, so it's weighted down rather than
-  // trusted fully — this still catches real lean without over-triggering
-  // from depth-estimation jitter.
+  // vertical line. 0deg = upright, larger = leaning further forward/back.
   const dx = shoulder.x - hip.x;
   const dy = shoulder.y - hip.y;
-  const dz = (shoulder.z ?? 0) - (hip.z ?? 0);
-  const horizontalMag = Math.hypot(dx, dz * 0.5);
-  const backAngle = (Math.atan2(horizontalMag, Math.abs(dy)) * 180) / Math.PI;
+  const backAngle = (Math.atan2(Math.abs(dx), Math.abs(dy)) * 180) / Math.PI;
 
   // Knee valgus (knees caving inward): compare knee-to-knee width against
   // ankle-to-knee width on the frame. Only meaningful when both knees/ankles
