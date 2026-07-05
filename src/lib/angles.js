@@ -66,13 +66,15 @@ export function computeSquatMetrics(landmarks) {
   const kneeAngle = angleAt(hip, knee, ankle);
 
   // Torso lean: angle of the shoulder->hip line relative to a perfectly
-  // vertical line, measured in 3D. This is the key fix — leaning forward
-  // while facing the camera head-on moves mostly in the DEPTH (z) axis, not
-  // left-right (x), so a 2D-only calculation would miss it almost entirely.
+  // vertical line, measured in 3D so leaning toward/away from a front-facing
+  // camera (which is pure depth movement) is still caught. The z channel is
+  // noisier than x/y on real hardware, so it's weighted down rather than
+  // trusted fully — this still catches real lean without over-triggering
+  // from depth-estimation jitter.
   const dx = shoulder.x - hip.x;
   const dy = shoulder.y - hip.y;
   const dz = (shoulder.z ?? 0) - (hip.z ?? 0);
-  const horizontalMag = Math.hypot(dx, dz);
+  const horizontalMag = Math.hypot(dx, dz * 0.5);
   const backAngle = (Math.atan2(horizontalMag, Math.abs(dy)) * 180) / Math.PI;
 
   // Knee valgus (knees caving inward): compare knee-to-knee width against

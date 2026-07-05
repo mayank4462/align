@@ -18,6 +18,15 @@ const MAX_DROPOUT_FRAMES = 12;
 // routine phase text ("Ready…") is allowed to overwrite it.
 const RESULT_HOLD_MS = 1500;
 
+// Smoothing factor for the exponential moving average applied to angles
+// before they're used for anything. Lower = smoother but slower to react.
+const SMOOTHING_ALPHA = 0.3;
+
+// A phase transition only fires once its trigger condition has held true
+// for this many consecutive frames — this is what stops a single noisy
+// frame (or a stray body movement) from being read as a real rep.
+const DEBOUNCE_FRAMES = 4;
+
 const PHASES = {
   STANDING: "standing",
   DESCENDING: "descending",
@@ -34,6 +43,9 @@ function freshRepState() {
     dropoutFrames: 0,
     lastGoodMetrics: null,
     resultHoldUntil: 0,
+    smoothKnee: null,
+    smoothBack: null,
+    debounceCounter: 0,
   };
 }
 
@@ -49,6 +61,18 @@ export function useSquatDetector(goal = 15) {
   // Mutable rep-tracking state that persists across frames without
   // triggering re-renders on every single frame.
   const repState = useRef(freshRepState());
+
+  // Advances state.debounceCounter while `conditionMet` stays true; resets
+  // it to 0 the moment it's false. Returns true only once the condition has
+  // held for DEBOUNCE_FRAMES in a row — that's the actual transition trigger.
+  function debounced(state, conditionMet) {
+    if (conditionMet) {
+      state.debounceCounter += 1;
+      return state.debounceCounter >= DEBOUNCE_FRAMES;
+    }
+    state.debounceCounter = 0;
+    return false;
+  }
 
   function processFrame(landmarks) {
     const state = repState.current;
@@ -70,9 +94,23 @@ export function useSquatDetector(goal = 15) {
       state.lastGoodMetrics = metrics;
     }
 
-    setLiveMetrics(metrics);
+    // Smooth the angles with an exponential moving average so a single
+    // noisy frame can't swing the reading. This is what fixes both random
+    // movement being read as a rep, and real reps being falsely flagged.
+    state.smoothKnee =
+      state.smoothKnee === null
+        ? metrics.kneeAngle
+        : SMOOTHING_ALPHA * metrics.kneeAngle + (1 - SMOOTHING_ALPHA) * state.smoothKnee;
+    state.smoothBack =
+      state.smoothBack === null
+        ? metrics.backAngle
+        : SMOOTHING_ALPHA * metrics.backAngle + (1 - SMOOTHING_ALPHA) * state.smoothBack;
 
-    const { kneeAngle, backAngle, kneeCaveRatio } = metrics;
+    const kneeAngle = state.smoothKnee;
+    const backAngle = state.smoothBack;
+    const { kneeCaveRatio } = metrics;
+
+    setLiveMetrics({ ...metrics, kneeAngle, backAngle });
 
     // Track the worst values seen during the current rep.
     state.minKneeAngle = Math.min(state.minKneeAngle, kneeAngle);
@@ -81,9 +119,10 @@ export function useSquatDetector(goal = 15) {
       state.minKneeCaveRatio = Math.min(state.minKneeCaveRatio, kneeCaveRatio);
     }
 
-    // Simple state machine driven by knee angle.
+    // State machine driven by the smoothed knee angle, with each transition
+    // debounced so it only fires on a sustained movement, not a flicker.
     if (state.phase === PHASES.STANDING) {
-      if (kneeAngle < STANDING_KNEE_ANGLE - 10) {
+      if (debounced(state, kneeAngle < STANDING_KNEE_ANGLE - 10)) {
         state.phase = PHASES.DESCENDING;
         setPhase(PHASES.DESCENDING);
         setSetSummary((s) => (s !== null ? null : s));
@@ -93,12 +132,12 @@ export function useSquatDetector(goal = 15) {
       }
     } else if (state.phase === PHASES.DESCENDING) {
       setFeedback("Descending…");
-      if (kneeAngle <= SHALLOW_DEPTH_KNEE_ANGLE) {
+      if (debounced(state, kneeAngle <= SHALLOW_DEPTH_KNEE_ANGLE)) {
         state.phase = PHASES.BOTTOM;
         setPhase(PHASES.BOTTOM);
       }
     } else if (state.phase === PHASES.BOTTOM) {
-      if (kneeAngle > SHALLOW_DEPTH_KNEE_ANGLE + 5) {
+      if (debounced(state, kneeAngle > SHALLOW_DEPTH_KNEE_ANGLE + 5)) {
         state.phase = PHASES.ASCENDING;
         setPhase(PHASES.ASCENDING);
       } else {
@@ -106,7 +145,7 @@ export function useSquatDetector(goal = 15) {
       }
     } else if (state.phase === PHASES.ASCENDING) {
       setFeedback("Rising…");
-      if (kneeAngle >= STANDING_KNEE_ANGLE) {
+      if (debounced(state, kneeAngle >= STANDING_KNEE_ANGLE)) {
         // Rep complete — evaluate it.
         const faults = [];
         if (state.minKneeAngle > SHALLOW_DEPTH_KNEE_ANGLE) {
@@ -140,7 +179,7 @@ export function useSquatDetector(goal = 15) {
           setFeedback(`Didn't count — ${faults.join(" ")}`);
         }
 
-        // Reset per-rep tracking (but keep dropout/lastGoodMetrics state).
+        // Reset per-rep tracking (but keep dropout/lastGoodMetrics/smoothing state).
         state.phase = PHASES.STANDING;
         state.minKneeAngle = 180;
         state.maxBackAngle = 0;
@@ -177,9 +216,8 @@ export function useSquatDetector(goal = 15) {
       return []; // clear history for the next set
     });
 
-    const dropoutFrames = repState.current.dropoutFrames;
-    const lastGoodMetrics = repState.current.lastGoodMetrics;
-    repState.current = { ...freshRepState(), dropoutFrames, lastGoodMetrics };
+    const { dropoutFrames, lastGoodMetrics, smoothKnee, smoothBack } = repState.current;
+    repState.current = { ...freshRepState(), dropoutFrames, lastGoodMetrics, smoothKnee, smoothBack };
     setRepCount(0);
     setPhase(PHASES.STANDING);
     setFeedback("Stand facing the camera to begin your next set.");
