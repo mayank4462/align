@@ -46,6 +46,7 @@ function freshRepState() {
     smoothKnee: null,
     smoothBack: null,
     debounceCounter: 0,
+    currentSide: null,
   };
 }
 
@@ -76,7 +77,7 @@ export function useSquatDetector(goal = 15) {
 
   function processFrame(landmarks) {
     const state = repState.current;
-    let metrics = computeSquatMetrics(landmarks);
+    let metrics = computeSquatMetrics(landmarks, state.currentSide);
 
     if (!metrics || metrics.kneeAngle === null) {
       // Brief occlusion — reuse the last known-good reading instead of
@@ -92,6 +93,7 @@ export function useSquatDetector(goal = 15) {
     } else {
       state.dropoutFrames = 0;
       state.lastGoodMetrics = metrics;
+      state.currentSide = metrics.side;
     }
 
     // Smooth the angles with an exponential moving average so a single
@@ -147,17 +149,24 @@ export function useSquatDetector(goal = 15) {
       setFeedback("Rising…");
       if (debounced(state, kneeAngle >= STANDING_KNEE_ANGLE)) {
         // Rep complete — evaluate it.
+        // NOTE: depth is currently the only thing that blocks "Perfect" —
+        // back-lean and knee-cave are shown as information but don't count
+        // against you yet, since those two need real calibration data
+        // before they're trustworthy enough to block a rep. Depth (knee
+        // angle) is the most reliable signal we have right now.
         const faults = [];
         if (state.minKneeAngle > SHALLOW_DEPTH_KNEE_ANGLE) {
           faults.push("Go deeper — aim for thighs at least parallel.");
         } else if (state.minKneeAngle > GOOD_DEPTH_KNEE_ANGLE) {
           faults.push("Close — a little deeper for a full rep.");
         }
+
+        const notes = [];
         if (state.maxBackAngle > MAX_BACK_LEAN) {
-          faults.push("Keep your chest up — you leaned too far forward.");
+          notes.push("chest lean noted");
         }
         if (state.minKneeCaveRatio < MIN_KNEE_CAVE_RATIO) {
-          faults.push("Push your knees out — they caved inward.");
+          notes.push("knees drifted in");
         }
 
         setRepCount((n) => n + 1);
@@ -168,10 +177,11 @@ export function useSquatDetector(goal = 15) {
         if (faults.length === 0) {
           setPerfectRepCount((n) => {
             const next = n + 1;
+            const noteText = notes.length ? ` (${notes.join(", ")})` : "";
             setFeedback(
               next >= goal
                 ? `Perfect rep! Goal reached — ${next}/${goal} perfect squats 🎉`
-                : `Perfect rep! (${next}/${goal} perfect)`
+                : `Perfect rep! (${next}/${goal} perfect)${noteText}`
             );
             return next;
           });
@@ -216,8 +226,8 @@ export function useSquatDetector(goal = 15) {
       return []; // clear history for the next set
     });
 
-    const { dropoutFrames, lastGoodMetrics, smoothKnee, smoothBack } = repState.current;
-    repState.current = { ...freshRepState(), dropoutFrames, lastGoodMetrics, smoothKnee, smoothBack };
+    const { dropoutFrames, lastGoodMetrics, smoothKnee, smoothBack, currentSide } = repState.current;
+    repState.current = { ...freshRepState(), dropoutFrames, lastGoodMetrics, smoothKnee, smoothBack, currentSide };
     setRepCount(0);
     setPhase(PHASES.STANDING);
     setFeedback("Stand facing the camera to begin your next set.");

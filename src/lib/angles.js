@@ -28,8 +28,14 @@ export function angleAt(a, b, c) {
   return (Math.acos(cos) * 180) / Math.PI;
 }
 
-/** Picks whichever side (left/right) has higher landmark visibility/presence. */
-function pickSide(landmarks) {
+/**
+ * Picks whichever side (left/right) has higher landmark visibility/presence.
+ * Sticks with the previously chosen side unless the other side is clearly
+ * more visible — without this, visibility scores flickering slightly frame
+ * to frame can make the app jump between your left and right leg, which
+ * looks like fake movement to the rep detector.
+ */
+function pickSide(landmarks, preferredSide) {
   const leftVis =
     (landmarks[LM.LEFT_HIP]?.visibility ?? 0) +
     (landmarks[LM.LEFT_KNEE]?.visibility ?? 0) +
@@ -38,6 +44,10 @@ function pickSide(landmarks) {
     (landmarks[LM.RIGHT_HIP]?.visibility ?? 0) +
     (landmarks[LM.RIGHT_KNEE]?.visibility ?? 0) +
     (landmarks[LM.RIGHT_ANKLE]?.visibility ?? 0);
+
+  const SWITCH_MARGIN = 0.3; // require a clear win before switching sides
+  if (preferredSide === "left" && leftVis >= rightVis - SWITCH_MARGIN) return "left";
+  if (preferredSide === "right" && rightVis >= leftVis - SWITCH_MARGIN) return "right";
   return rightVis >= leftVis ? "right" : "left";
 }
 
@@ -45,10 +55,10 @@ function pickSide(landmarks) {
  * Extracts the squat-relevant metrics for a single frame of landmarks.
  * Returns null if key points aren't visible enough to trust.
  */
-export function computeSquatMetrics(landmarks) {
+export function computeSquatMetrics(landmarks, preferredSide = null) {
   if (!landmarks) return null;
 
-  const side = pickSide(landmarks);
+  const side = pickSide(landmarks, preferredSide);
   const hip = landmarks[side === "left" ? LM.LEFT_HIP : LM.RIGHT_HIP];
   const knee = landmarks[side === "left" ? LM.LEFT_KNEE : LM.RIGHT_KNEE];
   const ankle = landmarks[side === "left" ? LM.LEFT_ANKLE : LM.RIGHT_ANKLE];
