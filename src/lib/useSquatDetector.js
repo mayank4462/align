@@ -9,26 +9,12 @@ const SHALLOW_DEPTH_KNEE_ANGLE = 120; // above this at the bottom = too shallow
 const MAX_BACK_LEAN = 45; // degrees from vertical before we flag forward lean
 const MIN_KNEE_CAVE_RATIO = 0.65; // knee-gap/ankle-gap below this = caving in
 
-// How long a "Perfect rep!" / "Didn't count" result stays on screen before
-// routine phase text ("Ready…") is allowed to overwrite it.
-const RESULT_HOLD_MS = 1500;
-
 const PHASES = {
   STANDING: "standing",
   DESCENDING: "descending",
   BOTTOM: "bottom",
   ASCENDING: "ascending",
 };
-
-function freshRepState() {
-  return {
-    phase: PHASES.STANDING,
-    minKneeAngle: 180,
-    maxBackAngle: 0,
-    minKneeCaveRatio: 1,
-    resultHoldUntil: 0,
-  };
-}
 
 export function useSquatDetector(goal = 15) {
   const [repCount, setRepCount] = useState(0);
@@ -41,7 +27,12 @@ export function useSquatDetector(goal = 15) {
 
   // Mutable rep-tracking state that persists across frames without
   // triggering re-renders on every single frame.
-  const repState = useRef(freshRepState());
+  const repState = useRef({
+    phase: PHASES.STANDING,
+    minKneeAngle: 180,
+    maxBackAngle: 0,
+    minKneeCaveRatio: 1,
+  });
 
   function processFrame(landmarks) {
     const metrics = computeSquatMetrics(landmarks);
@@ -67,8 +58,9 @@ export function useSquatDetector(goal = 15) {
       if (kneeAngle < STANDING_KNEE_ANGLE - 10) {
         state.phase = PHASES.DESCENDING;
         setPhase(PHASES.DESCENDING);
+        // Starting a new rep clears any leftover summary from a prior set.
         setSetSummary((s) => (s !== null ? null : s));
-      } else if (Date.now() > state.resultHoldUntil) {
+      } else {
         setFeedback("Ready — go ahead and squat.");
       }
     } else if (state.phase === PHASES.DESCENDING) {
@@ -78,6 +70,7 @@ export function useSquatDetector(goal = 15) {
         setPhase(PHASES.BOTTOM);
       }
     } else if (state.phase === PHASES.BOTTOM) {
+      // Waiting to see if they go back up.
       if (kneeAngle > SHALLOW_DEPTH_KNEE_ANGLE + 5) {
         state.phase = PHASES.ASCENDING;
         setPhase(PHASES.ASCENDING);
@@ -103,7 +96,6 @@ export function useSquatDetector(goal = 15) {
 
         setRepCount((n) => n + 1);
         setRepHistory((h) => [...h, { faults, good: faults.length === 0 }]);
-        state.resultHoldUntil = Date.now() + RESULT_HOLD_MS;
 
         if (faults.length === 0) {
           setPerfectRepCount((n) => {
@@ -156,14 +148,25 @@ export function useSquatDetector(goal = 15) {
       return []; // clear history for the next set
     });
 
-    repState.current = freshRepState();
+    // Reset live rep tracking so the next set starts clean.
+    repState.current = {
+      phase: PHASES.STANDING,
+      minKneeAngle: 180,
+      maxBackAngle: 0,
+      minKneeCaveRatio: 1,
+    };
     setRepCount(0);
     setPhase(PHASES.STANDING);
     setFeedback("Stand facing the camera to begin your next set.");
   }
 
   function reset() {
-    repState.current = freshRepState();
+    repState.current = {
+      phase: PHASES.STANDING,
+      minKneeAngle: 180,
+      maxBackAngle: 0,
+      minKneeCaveRatio: 1,
+    };
     setRepCount(0);
     setPhase(PHASES.STANDING);
     setFeedback("Stand facing the camera to begin.");
