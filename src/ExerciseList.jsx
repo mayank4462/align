@@ -31,7 +31,11 @@ export default function ExerciseList({ onSelect }) {
         <h1 className="font-display text-3xl font-semibold mb-1">
           Choose an exercise
         </h1>
-        <p className="text-[#9AA0A8] mb-8">Pick what you're training today.</p>
+        <p className="text-[#9AA0A8] mb-3">Pick what you're training today.</p>
+        <p className="text-sm text-[#6E7278] mb-8 max-w-lg leading-relaxed border-l-2 border-[#22252A] pl-4">
+          Our mission is simple: help you do every rep with genuinely correct
+          form — checked live by your own camera, not guessed at afterward.
+        </p>
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
           {EXERCISES.map((exercise) => (
             <ExerciseCard key={exercise.id} exercise={exercise} onSelect={onSelect} />
